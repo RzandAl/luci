@@ -3,6 +3,7 @@
 'require fs';
 'require ui';
 'require rpc';
+'require uci';
 
 const css = '								\
 	.controls {							\
@@ -40,6 +41,22 @@ const css = '								\
 	.controls > * > * {					\
 		flex-grow: 1;					\
 		align-self: center;				\
+	}									\
+										\
+	.untrusted-upload-status {			\
+		margin-left: .75em;			\
+	}									\
+										\
+	.untrusted-upload-status > .label {	\
+		display: inline-block;			\
+		padding-top: .2em;				\
+		padding-bottom: .2em;			\
+		transform: scale(.9);			\
+		transform-origin: left center;	\
+	}									\
+										\
+	.untrusted-upload-description {		\
+		padding-bottom: .5em;			\
 	}									\
 										\
 	.controls > div > input {			\
@@ -91,6 +108,13 @@ const callMountPoints = rpc.declare({
 	object: 'luci',
 	method: 'getMountPoints',
 	expect: { result: [] }
+});
+
+const callUciCommit = rpc.declare({
+	object: 'uci',
+	method: 'commit',
+	params: [ 'config' ],
+	reject: true
 });
 
 const packages = {
@@ -855,6 +879,33 @@ function handleManualInstall(ev)
 	]);
 }
 
+function untrustedUploadsEnabled()
+{
+	return uci.get('luci', 'package_manager', 'allow_untrusted_uploads') === '1';
+}
+
+function renderUntrustedUploadStatus()
+{
+	const enabled = untrustedUploadsEnabled();
+
+	return E('span', {
+		'id': 'untrusted-upload-status',
+		'class': 'label ' + (enabled ? 'warning' : 'success')
+	}, enabled ? _('Allowed') : _('Blocked'));
+}
+
+function updateUntrustedUploadStatus()
+{
+	const status = document.getElementById('untrusted-upload-status');
+	const enabled = untrustedUploadsEnabled();
+
+	if (!status)
+		return;
+
+	status.className = 'label ' + (enabled ? 'warning' : 'success');
+	status.textContent = enabled ? _('Allowed') : _('Blocked');
+}
+
 function handleConfig(ev)
 {
 	const conf = {};
@@ -910,6 +961,25 @@ function handleConfig(ev)
 			}, '%h'.format(conf[file])));
 		});
 
+		if (L.hasSystemFeature('apk')) {
+			body.push(E('h5', {}, _('Local package installation')));
+			body.push(E('p', {}, [
+				E('label', { 'class': 'cbi-checkbox' }, [
+					E('input', {
+						'id': 'allow-untrusted-uploads-cb',
+						'type': 'checkbox',
+						'name': 'allow_untrusted_uploads',
+						'checked': untrustedUploadsEnabled() || null,
+						'disabled': isReadonlyView
+					}), ' ',
+					E('label', { 'for': 'allow-untrusted-uploads-cb' }), ' ',
+					_('Allow untrusted local packages')
+				])
+			]));
+			body.push(E('p', { 'class': 'cbi-value-description untrusted-upload-description' },
+				_('Permit installation of uploaded local APK files without a trusted signature. Each installation still requires confirmation.')));
+		}
+
 		body.push(E('div', { 'class': 'button-row' }, [
 			E('div', {
 				'class': 'btn cbi-button-neutral',
@@ -920,7 +990,10 @@ function handleConfig(ev)
 				'class': 'btn cbi-button-positive',
 				'click': function(ev) {
 					const data = {};
-					findParent(ev.target, '.modal').querySelectorAll('textarea[name]')
+					const modal = findParent(ev.target, '.modal');
+					const allowUntrustedUploads = modal.querySelector('input[name="allow_untrusted_uploads"]');
+
+					modal.querySelectorAll('textarea[name]')
 						.forEach(function(textarea) {
 							data[textarea.getAttribute('name')] = textarea.value
 						});
@@ -929,11 +1002,27 @@ function handleConfig(ev)
 						E('p', { 'class': 'spinning' }, _('Saving configuration data…'))
 					]);
 
-					Promise.all(Object.keys(data).map(function(file) {
+					const tasks = Object.keys(data).map(function(file) {
 						return fs.write(file, data[file]).catch(function(err) {
 							ui.addNotification(null, E('p', {}, [ _('Unable to save %s: %s').format(file, err) ]));
 						});
-					})).then(ui.hideModal);
+					});
+
+					if (allowUntrustedUploads) {
+						if (!uci.get('luci', 'package_manager'))
+							uci.add('luci', 'package_manager', 'package_manager');
+
+						uci.set('luci', 'package_manager', 'allow_untrusted_uploads', allowUntrustedUploads.checked ? '1' : '0');
+						tasks.push(uci.save().then(function() {
+							return callUciCommit('luci');
+						}).then(function() {
+							updateUntrustedUploadStatus();
+						}).catch(function(err) {
+							ui.addNotification(null, E('p', {}, [ _('Unable to save package manager settings: %s').format(err) ]));
+						}));
+					}
+
+					Promise.all(tasks).then(ui.hideModal);
 				},
 				'disabled': isReadonlyView
 			}, _('Save')),
@@ -1069,8 +1158,12 @@ function handleUpload(ev)
 {
 	const path = '/tmp/upload.%s'.format(L.hasSystemFeature('apk') ? 'apk' : 'ipk');
 	return ui.uploadFile(path).then(L.bind(function(btn, res) {
+		const warning = L.hasSystemFeature('apk') && !untrustedUploadsEnabled()
+			? _('Untrusted local APK installation is currently blocked. If this package is unsigned or otherwise not trusted by apk, enable <em>Allow untrusted local packages</em> in Configure APK before installing it. Really attempt to install <em>%h</em>?').format(res.name)
+			: _('Installing packages from untrusted sources is a potential security risk! Really attempt to install <em>%h</em>?').format(res.name);
+
 		ui.showModal(_('Manually install package'), [
-			E('p', {}, _('Installing packages from untrusted sources is a potential security risk! Really attempt to install <em>%h</em>?').format(res.name)),
+			E('p', {}, warning),
 			E('ul', {}, [
 				res.size ? E('li', {}, '%s: %1024.2mB'.format(_('Size'), res.size)) : '',
 				res.checksum ? E('li', {}, '%s: %s'.format(_('MD5'), res.checksum)) : '',
@@ -1148,7 +1241,12 @@ function handleInput(ev) {
 
 return view.extend({
 	load() {
-		return downloadLists();
+		return Promise.all([
+			downloadLists(),
+			L.hasSystemFeature('apk') ? uci.load('luci') : Promise.resolve()
+		]).then(function(data) {
+			return data[0];
+		});
 	},
 
 	render(listData) {
@@ -1190,7 +1288,16 @@ return view.extend({
 				]),
 
 				E('div', {}, [
-					E('label', {}, _('Actions') + ':'), ' ',
+					E('label', {}, [
+						_('Actions') + ':',
+						L.hasSystemFeature('apk') ? E('span', {
+							'class': 'untrusted-upload-status',
+							'data-tooltip': _('Change this setting in Configure APK.')
+						}, [
+							_('Untrusted local APKs') + ': ',
+							renderUntrustedUploadStatus()
+						]) : ''
+					]), ' ',
 					E('span', { 'class': 'control-group' }, [
 						E('button', { 'class': 'btn cbi-button-positive', 'data-command': 'update', 'click': handlePkg, 'disabled': isReadonlyView }, [ _('Update lists…') ]), ' ',
 						E('button', { 'class': 'btn cbi-button-action', 'click': handleUpload, 'disabled': isReadonlyView }, [ _('Upload Package…') ]), ' ',
