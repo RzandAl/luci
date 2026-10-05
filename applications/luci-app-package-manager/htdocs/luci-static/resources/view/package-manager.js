@@ -117,6 +117,13 @@ const callUciCommit = rpc.declare({
 	reject: true
 });
 
+const callUciRevert = rpc.declare({
+	object: 'uci',
+	method: 'revert',
+	params: [ 'config' ],
+	reject: true
+});
+
 const packages = {
 	available: { providers: {}, pkgs: {} },
 	installed: { providers: {}, pkgs: {} }
@@ -906,6 +913,15 @@ function updateUntrustedUploadStatus()
 	status.textContent = enabled ? _('Allowed') : _('Blocked');
 }
 
+function reloadUntrustedUploadSetting()
+{
+	uci.unload('luci');
+
+	return L.resolveDefault(uci.load('luci'), null).then(function() {
+		updateUntrustedUploadStatus();
+	});
+}
+
 function handleConfig(ev)
 {
 	const conf = {};
@@ -977,7 +993,7 @@ function handleConfig(ev)
 				])
 			]));
 			body.push(E('p', { 'class': 'cbi-value-description untrusted-upload-description' },
-				_('Permit installation of uploaded local APK files without a trusted signature. Each installation still requires confirmation.')));
+				_('Permit installation of uploaded local APK files with an untrusted or missing signature. Each installation still requires confirmation.')));
 		}
 
 		body.push(E('div', { 'class': 'button-row' }, [
@@ -1018,11 +1034,16 @@ function handleConfig(ev)
 						}).then(function() {
 							updateUntrustedUploadStatus();
 						}).catch(function(err) {
-							ui.addNotification(null, E('p', {}, [ _('Unable to save package manager settings: %s').format(err) ]));
+							return L.resolveDefault(callUciRevert('luci'), null)
+								.then(reloadUntrustedUploadSetting)
+								.then(function() { throw err });
 						}));
 					}
 
-					Promise.all(tasks).then(ui.hideModal);
+					Promise.all(tasks).then(ui.hideModal).catch(function(err) {
+						ui.hideModal();
+						ui.addNotification(null, E('p', {}, [ _('Unable to save package manager settings: %s').format(err) ]));
+					});
 				},
 				'disabled': isReadonlyView
 			}, _('Save')),
@@ -1158,9 +1179,16 @@ function handleUpload(ev)
 {
 	const path = '/tmp/upload.%s'.format(L.hasSystemFeature('apk') ? 'apk' : 'ipk');
 	return ui.uploadFile(path).then(L.bind(function(btn, res) {
-		const warning = L.hasSystemFeature('apk') && !untrustedUploadsEnabled()
-			? _('Untrusted local APK installation is currently blocked. If this package is unsigned or otherwise not trusted by apk, enable <em>Allow untrusted local packages</em> in Configure APK before installing it. Really attempt to install <em>%h</em>?').format(res.name)
-			: _('Installing packages from untrusted sources is a potential security risk! Really attempt to install <em>%h</em>?').format(res.name);
+		let warning;
+
+		if (L.hasSystemFeature('apk')) {
+			warning = untrustedUploadsEnabled()
+				? _('Signature trust verification will be bypassed for this uploaded APK. Install it only if you trust its source. Really attempt to install <em>%h</em>?').format(res.name)
+				: _('The apk package manager will enforce its normal signature trust checks for this uploaded package. To permit an untrusted or unsigned APK, enable <em>Allow untrusted local packages</em> in Configure APK. Really attempt to install <em>%h</em>?').format(res.name);
+		}
+		else {
+			warning = _('Installing packages from untrusted sources is a potential security risk! Really attempt to install <em>%h</em>?').format(res.name);
+		}
 
 		ui.showModal(_('Manually install package'), [
 			E('p', {}, warning),
