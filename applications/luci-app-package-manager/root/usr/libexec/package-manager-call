@@ -93,7 +93,7 @@ case "$action" in
 			   [ "$#" -eq 1 ] &&
 			   [ "$1" = "/tmp/upload.apk" ] &&
 			   [ "$(uci -q get luci-package-manager.main.allow_untrusted_uploads)" = "1" ]; then
-				cmd="$cmd --allow-untrusted --force-non-repository"
+				cmd="$cmd --allow-untrusted"
 			fi
 
 			# Prevent package names and paths from being parsed as apk options.
