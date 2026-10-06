@@ -15,7 +15,7 @@
 			"ubus": {
 				"luci": [ "getMountPoints" ]
 			},
-			"uci": [ "luci" ]
+			"uci": [ "luci-package-manager" ]
 		},
 		"write": {
 			"file": {
@@ -33,7 +33,7 @@
 				"/tmp/upload.ipk": [ "write" ],
 				"/tmp/upload.apk": [ "write" ]
 			},
-			"uci": [ "luci" ]
+			"uci": [ "luci-package-manager" ]
 		}
 	}
 }

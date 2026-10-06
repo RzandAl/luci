@@ -92,7 +92,7 @@ case "$action" in
 			   [ "$requested_action" = "install" ] &&
 			   [ "$#" -eq 1 ] &&
 			   [ "$1" = "/tmp/upload.apk" ] &&
-			   [ "$(uci -q get luci.package_manager.allow_untrusted_uploads)" = "1" ]; then
+			   [ "$(uci -q get luci-package-manager.main.allow_untrusted_uploads)" = "1" ]; then
 				cmd="$cmd --allow-untrusted --force-non-repository"
 			fi
 

@@ -103,6 +103,8 @@ const css = '								\
 ';
 
 const isReadonlyView = !L.hasViewPermission() || null;
+const untrustedUploadConfig = 'luci-package-manager';
+const untrustedUploadSection = 'main';
 
 const callMountPoints = rpc.declare({
 	object: 'luci',
@@ -888,7 +890,7 @@ function handleManualInstall(ev)
 
 function untrustedUploadsEnabled()
 {
-	return uci.get('luci', 'package_manager', 'allow_untrusted_uploads') === '1';
+	return uci.get(untrustedUploadConfig, untrustedUploadSection, 'allow_untrusted_uploads') === '1';
 }
 
 function renderUntrustedUploadStatus()
@@ -915,9 +917,9 @@ function updateUntrustedUploadStatus()
 
 function reloadUntrustedUploadSetting()
 {
-	uci.unload('luci');
+	uci.unload(untrustedUploadConfig);
 
-	return L.resolveDefault(uci.load('luci'), null).then(function() {
+	return L.resolveDefault(uci.load(untrustedUploadConfig), null).then(function() {
 		updateUntrustedUploadStatus();
 	});
 }
@@ -1025,16 +1027,16 @@ function handleConfig(ev)
 					});
 
 					if (allowUntrustedUploads) {
-						if (!uci.get('luci', 'package_manager'))
-							uci.add('luci', 'package_manager', 'package_manager');
+						if (!uci.get(untrustedUploadConfig, untrustedUploadSection))
+							uci.add(untrustedUploadConfig, 'package_manager', untrustedUploadSection);
 
-						uci.set('luci', 'package_manager', 'allow_untrusted_uploads', allowUntrustedUploads.checked ? '1' : '0');
+						uci.set(untrustedUploadConfig, untrustedUploadSection, 'allow_untrusted_uploads', allowUntrustedUploads.checked ? '1' : '0');
 						tasks.push(uci.save().then(function() {
-							return callUciCommit('luci');
+							return callUciCommit(untrustedUploadConfig);
 						}).then(function() {
 							updateUntrustedUploadStatus();
 						}).catch(function(err) {
-							return L.resolveDefault(callUciRevert('luci'), null)
+							return L.resolveDefault(callUciRevert(untrustedUploadConfig), null)
 								.then(reloadUntrustedUploadSetting)
 								.then(function() { throw err });
 						}));
@@ -1271,7 +1273,7 @@ return view.extend({
 	load() {
 		return Promise.all([
 			downloadLists(),
-			L.hasSystemFeature('apk') ? uci.load('luci') : Promise.resolve()
+			L.hasSystemFeature('apk') ? L.resolveDefault(uci.load(untrustedUploadConfig), null) : Promise.resolve()
 		]).then(function(data) {
 			return data[0];
 		});
