@@ -33,6 +33,9 @@
 				"/tmp/upload.ipk": [ "write" ],
 				"/tmp/upload.apk": [ "write" ]
 			},
+			"ubus": {
+				"uci": [ "commit", "revert" ]
+			},
 			"uci": [ "luci-package-manager" ]
 		}
 	}
